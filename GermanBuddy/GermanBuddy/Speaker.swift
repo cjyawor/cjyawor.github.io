@@ -9,20 +9,24 @@ final class Speaker: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
 
     var rate: Float = 0.45
     private let synth = AVSpeechSynthesizer()
-    private var onFinish: (() -> Void)?
+    private var pending = 0
+    var onIdle: (() -> Void)?
 
     override init() {
         super.init()
         synth.delegate = self
     }
 
-    func speak(_ text: String, onFinish: @escaping () -> Void) {
-        self.onFinish = onFinish
+    /// Queues one sentence. Safe to call repeatedly while a reply is still streaming in.
+    func enqueue(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        pending += 1
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .spokenAudio, options: [])
         try? session.setActive(true)
 
-        let utterance = AVSpeechUtterance(string: text)
+        let utterance = AVSpeechUtterance(string: trimmed)
         utterance.voice = Speaker.bestGermanVoice()
         utterance.rate = rate
         utterance.pitchMultiplier = 1.05
@@ -45,8 +49,12 @@ final class Speaker: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
         return voices.max { score($0) < score($1) } ?? AVSpeechSynthesisVoice(language: "de-DE")
     }
 
+    var isBusy: Bool { pending > 0 }
+
     func stop() {
+        pending = 0
         synth.stopSpeaking(at: .immediate)
+        isSpeaking = false
     }
 
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didStart u: AVSpeechUtterance) {
@@ -61,12 +69,18 @@ final class Speaker: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
 
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) {
         Task { @MainActor in
-            self.isSpeaking = false
-            self.onFinish?()
+            self.pending = max(0, self.pending - 1)
+            if self.pending == 0 {
+                self.isSpeaking = false
+                self.onIdle?()
+            }
         }
     }
 
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel u: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = false }
+        Task { @MainActor in
+            self.pending = max(0, self.pending - 1)
+            if self.pending == 0 { self.isSpeaking = false }
+        }
     }
 }

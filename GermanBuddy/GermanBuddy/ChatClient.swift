@@ -3,7 +3,7 @@ import Foundation
 struct ChatMessage: Identifiable, Equatable {
     let id = UUID()
     let role: String        // "user" or "assistant"
-    let german: String      // what is spoken / heard
+    var german: String      // what is spoken / heard
     var tip: String? = nil  // short English note, never spoken
 }
 
@@ -13,48 +13,66 @@ struct ChatClient {
 
     static func systemPrompt(name: String, level: String, tips: Bool) -> String {
         """
-        You are \(name), a warm, relaxed young woman who chats with a German learner at CEFR level \(level).
+        You are \(name), a warm, relaxed young woman who chats with a German learner.
         Speak standard German (Hochdeutsch) and always use the casual "du", never "Sie". Sound like a friend, not a textbook.
-        Keep replies to 1-3 short sentences at that level and end with a question that keeps the conversation going.
-        Never use emojis, markdown, or lists. Your reply is read aloud.
+
+        About the learner: an adult in their 50s who spent a school year in Germany as a teenage exchange student and was fluent then. The German is rusty now. Understanding comes back faster than speaking, so be patient and encouraging. Starting level is about CEFR \(level). If they handle it easily, raise the difficulty a little at a time.
+
+        Topics: adult life, work, family, travel, food, current events, and memories of the exchange year. Ask about their life and follow their lead.
+
+        Replies: 1-3 short sentences, then a question that keeps them talking. Never use emojis, markdown, or lists. Your reply is read aloud.
+
+        If the learner drops in an English word or says they cannot think of a word, work the German word naturally into your reply so they hear it in context.
+
         \(tips
-          ? "After your German reply, add a line containing only --- and then one short English tip: correct any mistake the learner made, or give a useful word or phrase. Skip the tip if there is nothing worth saying."
+          ? "After your German reply, add a line containing only --- and then one short English tip. Correct at most one mistake, the one that matters most, or teach one useful word or phrase. Skip the tip when there is nothing worth saying. Never list several corrections."
           : "Do not add English.")
         """
     }
 
-    static func reply(history: [ChatMessage], apiKey: String,
-                      name: String, level: String, tips: Bool) async throws -> (german: String, tip: String?) {
-        var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
-        req.httpMethod = "POST"
-        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        req.setValue("application/json", forHTTPHeaderField: "content-type")
+    /// Streams raw text deltas as Claude writes them.
+    static func stream(history: [ChatMessage], apiKey: String,
+                       name: String, level: String, tips: Bool) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { cont in
+            let task = Task {
+                do {
+                    var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+                    req.httpMethod = "POST"
+                    req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+                    req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+                    req.setValue("application/json", forHTTPHeaderField: "content-type")
+                    let body: [String: Any] = [
+                        "model": model,
+                        "max_tokens": 400,
+                        "stream": true,
+                        "system": systemPrompt(name: name, level: level, tips: tips),
+                        "messages": history.map { ["role": $0.role, "content": $0.german] }
+                    ]
+                    req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 400,
-            "system": systemPrompt(name: name, level: level, tips: tips),
-            "messages": history.map { ["role": $0.role, "content": $0.german] }
-        ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw NSError(domain: "Claude", code: (response as? HTTPURLResponse)?.statusCode ?? 0,
-                          userInfo: [NSLocalizedDescriptionKey: msg])
+                    let (bytes, response) = try await URLSession.shared.bytes(for: req)
+                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                        var data = Data()
+                        for try await b in bytes { data.append(b) }
+                        throw NSError(domain: "Claude", code: (response as? HTTPURLResponse)?.statusCode ?? 0,
+                                      userInfo: [NSLocalizedDescriptionKey:
+                                                    String(data: data, encoding: .utf8) ?? "Unknown error"])
+                    }
+                    for try await line in bytes.lines {
+                        guard line.hasPrefix("data: ") else { continue }
+                        guard let d = String(line.dropFirst(6)).data(using: .utf8),
+                              let json = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                              json["type"] as? String == "content_block_delta",
+                              let delta = json["delta"] as? [String: Any],
+                              let text = delta["text"] as? String else { continue }
+                        cont.yield(text)
+                    }
+                    cont.finish()
+                } catch {
+                    cont.finish(throwing: error)
+                }
+            }
+            cont.onTermination = { _ in task.cancel() }
         }
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]],
-              let text = content.first?["text"] as? String else {
-            throw NSError(domain: "Claude", code: 0,
-                          userInfo: [NSLocalizedDescriptionKey: "Unexpected response."])
-        }
-
-        let parts = text.components(separatedBy: "\n---")
-        let german = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
-        let tip = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : nil
-        return (german, (tip?.isEmpty ?? true) ? nil : tip)
     }
 }

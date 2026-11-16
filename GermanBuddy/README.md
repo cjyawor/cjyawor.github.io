@@ -6,7 +6,7 @@ An iPhone app where you talk out loud to a German-speaking avatar (Lena). You sp
 
 - Speech in: Apple Speech framework, de-DE
 - Brain: Claude API (claude-haiku-5-5), prompt tuned to your CEFR level
-- Speech out: AVSpeechSynthesizer, German voice
+- Speech out: AVSpeechSynthesizer, best installed female German voice, sentence by sentence as the reply streams in
 - Avatar: SwiftUI drawing, blinks, thinks, opens its mouth on each spoken word
 
 ## Build (needs a Mac with Xcode 15+)
@@ -24,4 +24,4 @@ Tip: Settings > Accessibility > Spoken Content > Voices > German, download an En
 
 - Backend proxy so the API key is not on the phone (fine for personal use, not for App Store release)
 - Realistic avatar (Ready Player Me or a RealityKit 3D head with real lip-sync)
-- Streaming replies for lower lag
+
