@@ -1,0 +1,22 @@
+name: GermanBuddy
+options:
+  bundleIdPrefix: com.yaworski
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  GermanBuddy:
+    type: application
+    platform: iOS
+    sources: [GermanBuddy]
+    info:
+      path: GermanBuddy/Info.plist
+      properties:
+        CFBundleDisplayName: Lena
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSMicrophoneUsageDescription: Lena listens to you speak German.
+        NSSpeechRecognitionUsageDescription: Your German speech is turned into text so Lena can answer.
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        PRODUCT_BUNDLE_IDENTIFIER: com.yaworski.germanbuddy
