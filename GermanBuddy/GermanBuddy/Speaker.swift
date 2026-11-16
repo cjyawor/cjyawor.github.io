@@ -23,10 +23,26 @@ final class Speaker: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
         try? session.setActive(true)
 
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "de-DE")
+        utterance.voice = Speaker.bestGermanVoice()
         utterance.rate = rate
         utterance.pitchMultiplier = 1.05
         synth.speak(utterance)
+    }
+
+    /// Picks the best installed de-DE voice, preferring female, then Premium, then Enhanced.
+    static func bestGermanVoice() -> AVSpeechSynthesisVoice? {
+        let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == "de-DE" }
+        func score(_ v: AVSpeechSynthesisVoice) -> Int {
+            var n = 0
+            switch v.quality {
+            case .premium: n += 20
+            case .enhanced: n += 10
+            default: break
+            }
+            if #available(iOS 17.0, *), v.gender == .female { n += 5 }
+            return n
+        }
+        return voices.max { score($0) < score($1) } ?? AVSpeechSynthesisVoice(language: "de-DE")
     }
 
     func stop() {
